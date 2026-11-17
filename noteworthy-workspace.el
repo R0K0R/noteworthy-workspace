@@ -51,6 +51,7 @@
 (require 'auth-source)
 (require 'emacs-collab)
 (require 'emacs-collab-layout)
+(require 'emacs-collab-mirror)
 (require 'noteworthy)
 (require 'noteworthy-workspace-preview)
 (require 'noteworthy-workspace-pages)
@@ -88,8 +89,11 @@ and the arguments of the command give them; a key given here wins."
   :type '(choice (repeat string) string)
   :group 'noteworthy-workspace)
 
-(defcustom noteworthy-workspace-mirror-directory "~/collab/noteworthy/"
-  "Where server projects are mirrored, as HOST-PORT below this directory."
+(defcustom noteworthy-workspace-mirror-directory nil
+  "Suggested location of mirrors, as HOST-PORT below this directory.
+Only the suggestion shown when asking where to keep a project's local
+copy (see `emacs-collab-read-mirror-dir'); nil suggests nothing, and
+`emacs-collab-mirror-root' applies."
   :type 'directory
   :group 'noteworthy-workspace)
 
@@ -336,11 +340,13 @@ DIR, ask.  Return the editor window."
   (string-trim (replace-regexp-in-string "[^[:alnum:]._-]+" "-" s) "-+" "-+"))
 
 (defun noteworthy-workspace--mirror-dir (url)
-  (let ((hp (noteworthy-workspace--host+port url)))
-    (file-name-as-directory
-     (expand-file-name (noteworthy-workspace--slug
-                        (concat (car hp) (and (cdr hp) (concat "-" (cdr hp)))))
-                       noteworthy-workspace-mirror-directory))))
+  "Suggested mirror of the server at URL from the defcustom, or nil."
+  (when noteworthy-workspace-mirror-directory
+    (let ((hp (noteworthy-workspace--host+port url)))
+      (file-name-as-directory
+       (expand-file-name (noteworthy-workspace--slug
+                          (concat (car hp) (and (cdr hp) (concat "-" (cdr hp)))))
+                         noteworthy-workspace-mirror-directory)))))
 
 (defun noteworthy-workspace--secret (found)
   (let ((s (plist-get found :secret)))
@@ -391,18 +397,23 @@ one); the user is ignored."
       (funcall noteworthy-workspace--previous-need-auth conn fields reason))))
 
 ;;;###autoload
-(defun noteworthy-workspace-connect (server &optional token)
+(defun noteworthy-workspace-connect (server &optional token force-select)
   "Open the project of the Syncworthy/Noteworthy SERVER as a workspace.
 SERVER is a URL or host:port.  TOKEN, if the server wants one, is found in
 auth-source (an entry whose host is the server's) when not given.  The
-bridge (`noteworthy-workspace-bridge-command') mirrors the project into
-`noteworthy-workspace-mirror-directory'; the layout is built once it
-reports `ready'.  Return the emacs-collab connection."
+bridge (`noteworthy-workspace-bridge-command') mirrors the project into a
+local directory, asked for with `emacs-collab-read-mirror-dir' the first
+time and remembered per server; with a prefix argument (FORCE-SELECT)
+choose again.  `noteworthy-workspace-mirror-directory' only suggests a
+location.  The layout is built once the bridge reports `ready'.  Return
+the emacs-collab connection."
   (interactive
    (list (completing-read "Syncworthy server: " noteworthy-workspace-server-history
-                          nil nil nil 'noteworthy-workspace-server-history)))
+                          nil nil nil 'noteworthy-workspace-server-history)
+         nil current-prefix-arg))
   (let* ((url (noteworthy-workspace--normalize-url server))
-         (mirror (noteworthy-workspace--mirror-dir url))
+         (mirror (emacs-collab-read-mirror-dir
+                  "noteworthy" url (noteworthy-workspace--mirror-dir url) force-select))
          (argv (noteworthy-workspace--bridge-argv))
          (token (or token (noteworthy-workspace--lookup-token url)))
          (params `((server . ,url)
@@ -412,7 +423,6 @@ reports `ready'.  Return the emacs-collab connection."
                    ,@(and noteworthy-workspace-poll-secs
                           `((poll_secs . ,noteworthy-workspace-poll-secs)))))
          (creds (and token `((token . ,token)))))
-    (make-directory mirror t)
     (when (cl-find (noteworthy-workspace--canon mirror) noteworthy-workspace--sessions
                    :key #'noteworthy-workspace-session-root :test #'equal)
       (user-error "Already open: %s" url))
