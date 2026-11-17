@@ -175,13 +175,13 @@ preview pane the call is left alone."
 
 (advice-add 'find-file :around #'noteworthy-find-file-in-editor)
 
-;; The layout marks its windows with parameters, and they must survive a
-;; workspace switch: Doom's workspaces save and restore window layouts
-;; with `window-state-get'/`window-state-put', which keep a parameter only
-;; if it is listed here.  Without that, coming back to the workspace left
+;; The layout's own role marks are made persistent by emacs-collab-layout;
+;; this one is Noteworthy's.  Doom's workspaces save and restore window
+;; layouts with `window-state-get'/`window-state-put', which keep a
+;; parameter only if it is listed here.  Without that, coming back to the workspace left
 ;; no window marked as the editor, and a preview click opened the source
 ;; in whatever window was largest -- often the terminal.
-(dolist (param '(emacs-collab-role emacs-collab-layout-root noteworthy-editor))
+(dolist (param '(noteworthy-editor))
   (setf (alist-get param window-persistent-parameters) 'writable))
 
 (defun noteworthy--editor-window ()

@@ -466,7 +466,7 @@ Outside a server project it is a plain write."
         (setq rel (concat (if (equal rel "./") "" rel) (file-name-nondirectory file)))
         (if (not (file-exists-p file))
             (progn (noteworthy-pages-write-file file text)
-                   (emacs-collab--send conn (list :t "file" :op "create" :path rel :text text)))
+                   (emacs-collab-file-create conn rel text))
           (let ((buf (find-file-noselect file)))
             (if (not (noteworthy-workspace--await-synced buf))
                 (noteworthy-pages-write-file file text)
