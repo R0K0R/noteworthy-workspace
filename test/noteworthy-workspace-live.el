@@ -47,7 +47,7 @@
             (noteworthy-master-file nil)
             (unrelated (generate-new-buffer "*unrelated*"))
             (served (file-name-as-directory (nws-live--env "NWS_LIVE_DIR")))
-            (,conn (noteworthy-workspace-connect (nws-live--env "NWS_LIVE_URL"))))
+            (,conn (noteworthy-syncworthy-connect (nws-live--env "NWS_LIVE_URL"))))
        (cl-letf (((symbol-function 'typst-preview-start) #'ignore))
          (save-window-excursion
            (unwind-protect
@@ -125,7 +125,7 @@
 
 (ert-deftest nws-live-bad-bridge-is-a-user-error ()
   (let ((noteworthy-workspace-bridge-command '("/no/such/bridge")))
-    (should-error (noteworthy-workspace-connect "127.0.0.1:1") :type 'user-error)
+    (should-error (noteworthy-syncworthy-connect "127.0.0.1:1") :type 'user-error)
     (should-not noteworthy-workspace--sessions)))
 
 (provide 'noteworthy-workspace-live)

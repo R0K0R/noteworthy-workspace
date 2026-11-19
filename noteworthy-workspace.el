@@ -24,7 +24,7 @@
 ;;                                     first page, terminal, typst preview,
 ;;                                     an optional PDF/EPUB beside it.  No
 ;;                                     bridge, no server.
-;;   M-x noteworthy-workspace-connect  a Syncworthy/Noteworthy SERVER project,
+;;   M-x noteworthy-syncworthy-connect a Syncworthy/Noteworthy SERVER project,
 ;;                                     through `syncworthy_bridge': the bridge
 ;;                                     mirrors the project into a local
 ;;                                     directory, Emacs edits the mirror and
@@ -275,6 +275,34 @@ editor buffer, as it always was, with the project's dynamic inputs."
              unless (memq k '(:root :main-file :connection :on-quit))
              append (list k v))))
 
+(defvar treemacs-width)
+(defvar emacs-collab-layout--sizes)
+(declare-function emacs-collab-layout--load-state "emacs-collab-layout" ())
+
+(defun noteworthy-workspace--seed-sizes (root)
+  "Start ROOT's layout from the sizes the old layout remembered.
+Only while the layout has none of its own for ROOT: the widths in the
+project's `.noteworthy-layout' (:pdf-width, :preview-width), and the
+tree at `treemacs-width', as the old layout had it."
+  (emacs-collab-layout--load-state)
+  (require 'treemacs nil t)           ; for `treemacs-width'
+  (let ((key (emacs-collab-layout--canon root)))
+    (unless (assoc key emacs-collab-layout--sizes)
+      (let* ((file (expand-file-name ".noteworthy-layout" root))
+             (old (and (file-readable-p file)
+                       (ignore-errors
+                         (with-temp-buffer
+                           (insert-file-contents file)
+                           (read (current-buffer))))))
+             (seed (append
+                    (and (bound-and-true-p treemacs-width)
+                         (list :tree-width treemacs-width))
+                    (cl-loop for k in '(:pdf-width :preview-width)
+                             for v = (and (listp old) (plist-get old k))
+                             when (integerp v) append (list k v)))))
+        (when seed
+          (push (cons key seed) emacs-collab-layout--sizes))))))
+
 (defun noteworthy-workspace--build (s)
   "Set the project variables and build the layout of session S."
   (let* ((root (noteworthy-workspace-session-root s))
@@ -287,6 +315,7 @@ editor buffer, as it always was, with the project's dynamic inputs."
                   noteworthy-master-file master)
     (setq noteworthy-project-root root
           noteworthy-master-file master)
+    (noteworthy-workspace--seed-sizes root)
     (let ((editor (apply #'emacs-collab-layout-build
                          :root root :main-file main
                          :connection (noteworthy-workspace-session-conn s)
@@ -397,8 +426,10 @@ one); the user is ignored."
       (funcall noteworthy-workspace--previous-need-auth conn fields reason))))
 
 ;;;###autoload
-(defun noteworthy-workspace-connect (server &optional token force-select)
+(defun noteworthy-syncworthy-connect (server &optional token force-select pdf)
   "Open the project of the Syncworthy/Noteworthy SERVER as a workspace.
+PDF (or an EPUB, ...) is shown in a pane of its own, as with
+`noteworthy-workspace-open'.
 SERVER is a URL or host:port.  TOKEN, if the server wants one, is found in
 auth-source (an entry whose host is the server's) when not given.  The
 bridge (`noteworthy-workspace-bridge-command') mirrors the project into a
@@ -428,11 +459,16 @@ the emacs-collab connection."
       (user-error "Already open: %s" url))
     (add-to-list 'noteworthy-workspace-server-history server)
     (let ((s (noteworthy-workspace--make-session
-              :root (noteworthy-workspace--canon mirror) :kind 'remote :server url)))
+              :root (noteworthy-workspace--canon mirror) :kind 'remote :server url
+              :pdf (noteworthy-workspace--clean-pdf pdf))))
       (push s noteworthy-workspace--sessions)
       (noteworthy-workspace--install)
       (setf (noteworthy-workspace-session-conn s)
             (emacs-collab-connect argv params creds)))))
+
+;;;###autoload
+(define-obsolete-function-alias 'noteworthy-workspace-connect
+  #'noteworthy-syncworthy-connect "0.2")
 
 (defun noteworthy-workspace--on-ready (conn)
   "`emacs-collab-ready-functions': the mirror is complete, build the layout."

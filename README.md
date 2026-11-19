@@ -13,7 +13,7 @@ need this package.
 | Command | What |
 |---|---|
 | `noteworthy-workspace-open DIR [PDF]` | A **local** project. Tree, the first page in the editor, a terminal, the typst preview (an xwidget, when Emacs has them) and an optional PDF or EPUB pane. No bridge. Also `noteworthy-init`. |
-| `noteworthy-workspace-connect SERVER [TOKEN]` | A **server** project through `syncworthy_bridge`. The bridge mirrors the project into a local directory you choose (see below); buffers there sync live; tinymist previews the mirror locally. |
+| `noteworthy-syncworthy-connect SERVER [TOKEN] [FORCE] [PDF]` | A **server** project through `syncworthy_bridge`. The bridge mirrors the project into a local directory you choose (see below); buffers there sync live; tinymist previews the mirror locally. |
 | `noteworthy-workspace-quit` | `emacs-collab-layout-quit` (save offer, preview, language server, bridge, buffers, PDF, terminal, tree) plus stopping the typst-preview servers. Also `noteworthy-quit`. |
 | `noteworthy-new-page` (`M-t n`) | A page, or a chapter, in `hierarchy.json` and `content/`. On a server project the files reach the server too. |
 | `noteworthy-refresh-preview` (`M-t r`) | Restart the preview with the folder lists as they are now. |

@@ -111,7 +111,7 @@
     (should-not (noteworthy-workspace--mirror-dir "https://nw.example"))))
 
 (ert-deftest nws-test-connect-passes-selected-mirror ()
-  "`noteworthy-workspace-connect' asks for the mirror and hands it to the bridge."
+  "`noteworthy-syncworthy-connect' asks for the mirror and hands it to the bridge."
   (let* ((base (nws-test--tmp))
          (emacs-collab-mirror-state-file (expand-file-name "mirrors.eld" base))
          (emacs-collab-mirror--table 'unloaded)
@@ -129,17 +129,17 @@
                   ((symbol-function 'noteworthy-workspace--lookup-token) (lambda (_) nil))
                   ((symbol-function 'emacs-collab-connect)
                    (lambda (_argv params &optional _creds) (push (alist-get 'mirror_dir params) seen) 'conn)))
-          (should (eq (noteworthy-workspace-connect "h.example:1") 'conn))
+          (should (eq (noteworthy-syncworthy-connect "h.example:1") 'conn))
           (should (equal (car seen) (directory-file-name chosen)))
           (should (= 1 (length prompts)))
           ;; remembered: no prompt
           (setq noteworthy-workspace--sessions nil)
-          (noteworthy-workspace-connect "h.example:1")
+          (noteworthy-syncworthy-connect "h.example:1")
           (should (= 1 (length prompts)))
           (should (equal (car seen) (directory-file-name chosen)))
           ;; forced: prompts again from the remembered directory
           (setq noteworthy-workspace--sessions nil)
-          (noteworthy-workspace-connect "h.example:1" nil t)
+          (noteworthy-syncworthy-connect "h.example:1" nil t)
           (should (equal (car prompts) chosen))
           (should (equal (car seen) (directory-file-name other)))
           (should (equal (emacs-collab-mirror-remembered "noteworthy" "http://h.example:1") other)))
