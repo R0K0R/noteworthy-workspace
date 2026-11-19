@@ -58,6 +58,7 @@
           (emacs-collab-layout-last-root nil)
           (emacs-collab--connections nil)
           (noteworthy-workspace--sessions nil)
+          (syncworthy-workspace--sessions nil)
           (noteworthy-workspace-preview #'nws-test--preview-buffer)
           (noteworthy-workspace-terminal-shell nil)
           (nws-test--lsp-calls nil)
@@ -77,8 +78,10 @@
                (when (string-prefix-p ,(car spec) (file-truename f))
                  (with-current-buffer b (set-buffer-modified-p nil))
                  (kill-buffer b))))
-           (setq noteworthy-workspace--sessions nil)
+           (setq noteworthy-workspace--sessions nil
+                 syncworthy-workspace--sessions nil)
            (noteworthy-workspace--uninstall)
+           (syncworthy-workspace--uninstall)
            (ignore-errors (delete-directory ,(car spec) t)))))))
 
 (defmacro nws-test--with-stub-lsp (&rest body)
@@ -99,84 +102,6 @@
     f))
 
 ;;; Pure
-
-(ert-deftest nws-test-normalize-url-and-mirror ()
-  (should (equal (noteworthy-workspace--normalize-url "host:8011") "http://host:8011"))
-  (should (equal (noteworthy-workspace--normalize-url " https://h.example/ ") "https://h.example/"))
-  (should-error (noteworthy-workspace--normalize-url " ") :type 'user-error)
-  (let ((noteworthy-workspace-mirror-directory "/m/"))
-    (should (equal (noteworthy-workspace--mirror-dir "http://127.0.0.1:8011") "/m/127.0.0.1-8011/"))
-    (should (equal (noteworthy-workspace--mirror-dir "https://nw.example") "/m/nw.example/")))
-  (let ((noteworthy-workspace-mirror-directory nil))
-    (should-not (noteworthy-workspace--mirror-dir "https://nw.example"))))
-
-(ert-deftest nws-test-connect-passes-selected-mirror ()
-  "`noteworthy-syncworthy-connect' asks for the mirror and hands it to the bridge."
-  (let* ((base (nws-test--tmp))
-         (emacs-collab-mirror-state-file (expand-file-name "mirrors.eld" base))
-         (emacs-collab-mirror--table 'unloaded)
-         (noteworthy-workspace-mirror-directory nil)
-         (noteworthy-workspace--sessions nil)
-         (noteworthy-workspace-server-history nil)
-         (chosen (file-name-as-directory (expand-file-name "picked/here" base)))
-         (other (file-name-as-directory (expand-file-name "second" base)))
-         (answers (list chosen other)) (prompts nil) (seen nil))
-    (unwind-protect
-        (cl-letf (((symbol-function 'read-directory-name)
-                   (lambda (_p &optional dir &rest _) (push dir prompts) (pop answers)))
-                  ((symbol-function 'noteworthy-workspace--bridge-argv) (lambda () '("true")))
-                  ((symbol-function 'noteworthy-workspace--install) #'ignore)
-                  ((symbol-function 'noteworthy-workspace--lookup-token) (lambda (_) nil))
-                  ((symbol-function 'emacs-collab-connect)
-                   (lambda (_argv params &optional _creds) (push (alist-get 'mirror_dir params) seen) 'conn)))
-          (should (eq (noteworthy-syncworthy-connect "h.example:1") 'conn))
-          (should (equal (car seen) (directory-file-name chosen)))
-          (should (= 1 (length prompts)))
-          ;; remembered: no prompt
-          (setq noteworthy-workspace--sessions nil)
-          (noteworthy-syncworthy-connect "h.example:1")
-          (should (= 1 (length prompts)))
-          (should (equal (car seen) (directory-file-name chosen)))
-          ;; forced: prompts again from the remembered directory
-          (setq noteworthy-workspace--sessions nil)
-          (noteworthy-syncworthy-connect "h.example:1" nil t)
-          (should (equal (car prompts) chosen))
-          (should (equal (car seen) (directory-file-name other)))
-          (should (equal (emacs-collab-mirror-remembered "noteworthy" "http://h.example:1") other)))
-      (delete-directory base t))))
-
-(ert-deftest nws-test-bridge-argv ()
-  (let ((noteworthy-workspace-bridge-command "/definitely/not/here"))
-    (should-error (noteworthy-workspace--bridge-argv) :type 'user-error))
-  (let ((noteworthy-workspace-bridge-command '("sh" "-c")))
-    (should (equal (cdr (noteworthy-workspace--bridge-argv)) '("-c"))))
-  (let ((noteworthy-workspace-bridge-command "sh"))
-    (should (noteworthy-workspace--bridge-argv))))
-
-(ert-deftest nws-test-token-from-auth-source ()
-  (let* ((dir (nws-test--tmp))
-         (file (expand-file-name "authinfo" dir))
-         (auth-sources (list file))
-         (auth-source-cache-expiry nil))
-    (unwind-protect
-        (progn
-          (auth-source-forget-all-cached)
-          (with-temp-file file
-            (insert "machine nw.example port 8011 login token password s3cret\n"
-                    "machine other.example login token password nope\n"))
-          (set-file-modes file #o600)
-          (should (equal (noteworthy-workspace--lookup-token "http://nw.example:8011") "s3cret"))
-          (should-not (noteworthy-workspace--lookup-token "http://nobody.example:8011")))
-      (auth-source-forget-all-cached)
-      (delete-directory dir t))))
-
-(ert-deftest nws-test-unsynced-regexp ()
-  (should (noteworthy-workspace--attach-p nil "content/7/5.typ"))
-  (should (noteworthy-workspace--attach-p nil "config/hierarchy.json"))
-  (should-not (noteworthy-workspace--attach-p nil "images/a.png"))
-  (should-not (noteworthy-workspace--attach-p nil "output.pdf"))
-  (should-not (noteworthy-workspace--attach-p nil ".noteworthy-crdt/x.typ"))
-  (should-not (noteworthy-workspace--attach-p nil "logs/tinymist.log")))
 
 (ert-deftest nws-test-typst-inputs-scan-matches-script ()
   "The scan of content/ gives what noteworthy.py --print-inputs does."
@@ -217,6 +142,107 @@
   (should (eq (lookup-key noteworthy-typst-mode-map (kbd "M-t n")) #'noteworthy-new-page))
   (should (eq (indirect-function (lookup-key noteworthy-typst-mode-map (kbd "M-t q")))
               (indirect-function #'noteworthy-workspace-quit))))
+
+;;; Server projects (no bridge: the session is made by hand, as `on-ready' would)
+
+(ert-deftest nws-test-connect-is-syncworthy-plus-extras ()
+  "`noteworthy-connect' remembers the mirror under \"noteworthy\" and makes a Noteworthy session."
+  (let* ((base (nws-test--tmp))
+         (emacs-collab-mirror-state-file (expand-file-name "mirrors.eld" base))
+         (emacs-collab-mirror--table 'unloaded)
+         (syncworthy-workspace-mirror-directory nil)
+         (syncworthy-workspace--sessions nil)
+         (noteworthy-workspace--sessions nil)
+         (syncworthy-workspace-server-history nil)
+         (chosen (file-name-as-directory (expand-file-name "picked/here" base)))
+         (other (file-name-as-directory (expand-file-name "second" base)))
+         (answers (list chosen other)) (prompts nil) (seen nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'read-directory-name)
+                   (lambda (_p &optional dir &rest _) (push dir prompts) (pop answers)))
+                  ((symbol-function 'syncworthy-workspace--bridge-argv) (lambda () '("true")))
+                  ((symbol-function 'syncworthy-workspace--lookup-token) (lambda (_) nil))
+                  ((symbol-function 'emacs-collab-connect)
+                   (lambda (_argv params &optional _creds) (push (alist-get 'mirror_dir params) seen) 'conn)))
+          (should (eq (noteworthy-connect "h.example:1") 'conn))
+          (should (equal (car seen) (directory-file-name chosen)))
+          (let ((s (car syncworthy-workspace--sessions)))
+            (should (eq (syncworthy-workspace-session-kind s) 'noteworthy))
+            (should (equal (syncworthy-workspace-session-service s) "noteworthy")))
+          (should (memq #'noteworthy-workspace--maybe-enable find-file-hook))
+          (should (equal (emacs-collab-mirror-remembered "noteworthy" "http://h.example:1") chosen))
+          ;; remembered: no prompt
+          (setq syncworthy-workspace--sessions nil)
+          (noteworthy-connect "h.example:1")
+          (should (= 1 (length prompts)))
+          ;; forced: prompts again from the remembered directory
+          (setq syncworthy-workspace--sessions nil)
+          (noteworthy-connect "h.example:1" nil t)
+          (should (equal (car prompts) chosen))
+          (should (equal (car seen) (directory-file-name other)))
+          (should (equal (emacs-collab-mirror-remembered "noteworthy" "http://h.example:1") other)))
+      (setq syncworthy-workspace--sessions nil)
+      (syncworthy-workspace--uninstall)
+      (noteworthy-workspace--uninstall)
+      (delete-directory base t))))
+
+(ert-deftest nws-test-obsolete-aliases ()
+  (should (eq (indirect-function 'noteworthy-syncworthy-connect) (indirect-function 'noteworthy-connect)))
+  (should (eq (indirect-function 'noteworthy-workspace-connect) (indirect-function 'noteworthy-connect)))
+  (should (eq (indirect-variable 'noteworthy-workspace-bridge-command)
+              'syncworthy-workspace-bridge-command))
+  (should (eq (indirect-variable 'noteworthy-workspace-unsynced-regexp)
+              'syncworthy-workspace-unsynced-regexp)))
+
+(defun nws-test--server-session (dir &optional pdf)
+  (let ((s (syncworthy-workspace--make-session
+            :root (file-name-as-directory dir) :server "http://x:1" :pdf pdf
+            :service "noteworthy" :kind 'noteworthy)))
+    (push s syncworthy-workspace--sessions)
+    (noteworthy-workspace--install)
+    s))
+
+(ert-deftest nws-test-server-layout-has-typst-extras ()
+  (nws-test--with-project (dir)
+    (let* ((pdf (nws-test--fake-pdf dir))
+           (s (nws-test--server-session dir pdf))
+           (editor (syncworthy-workspace--build s))
+           (first (noteworthy-typst-first-page dir))
+           (roles (nws-test--roles)))
+      ;; (The PDF pane needs a display for a real PDF; see the local test.)
+      (dolist (r '(editor terminal preview)) (should (memq r roles)))
+      (should (equal (buffer-file-name (window-buffer editor)) first))
+      (should (equal (buffer-name (window-buffer (emacs-collab-layout-window 'preview)))
+                     "*nws-test-preview*"))
+      (should (equal noteworthy-project-root dir))
+      (should (equal (plist-get (syncworthy-workspace-session-extras s) :master)
+                     (expand-file-name "templates/core/parser.typ" dir)))
+      (should (equal noteworthy-master-file (plist-get (syncworthy-workspace-session-extras s) :master)))
+      (with-current-buffer (window-buffer editor) (should noteworthy-workspace-mode))
+      ;; Typst inputs of the mirror.
+      (should (= 2 (length (noteworthy-workspace-typst-input-flags dir))))
+      ;; Quit through the Noteworthy command: both kinds.
+      (let ((stopped nil))
+        (cl-letf (((symbol-function 'noteworthy-pages--stop-preview) (lambda () (setq stopped t))))
+          (noteworthy-workspace-quit))
+        (should stopped))
+      (should-not syncworthy-workspace--sessions)
+      (should-not noteworthy-project-root)
+      (should-not (nws-test--roles))
+      (should-not (memq #'noteworthy-workspace--maybe-enable find-file-hook)))))
+
+(ert-deftest nws-test-server-write-file-plain-outside-connection ()
+  "Without a ready connection the pages' write function is a plain write."
+  (nws-test--with-project (dir)
+    (let ((f (expand-file-name "content/8/777.typ" dir)))
+      (noteworthy-workspace--write-file f "hello")
+      (should (equal (with-temp-buffer (insert-file-contents f) (buffer-string)) "hello")))))
+
+(ert-deftest nws-test-sync-layer-does-not-leak-into-plain-sessions ()
+  "A plain Syncworthy session gets no preview and no Typst variables."
+  (nws-test--with-project (dir)
+    (let ((s (syncworthy-workspace--make-session :root dir :server "http://x:1")))
+      (should-not (plist-member (syncworthy-workspace--layout-args s) :preview)))))
 
 ;;; Local workspace
 

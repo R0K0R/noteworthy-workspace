@@ -33,8 +33,8 @@
      (skip-unless (and (nws-live--env "NWS_LIVE_URL") (nws-live--env "NWS_LIVE_DIR")
                        (nws-live--env "NWS_LIVE_BRIDGE")))
      (let* ((tmp (nws-live--env "NWS_LIVE_TMPDIR"))
-            (noteworthy-workspace-bridge-command (list (nws-live--env "NWS_LIVE_BRIDGE")))
-            (noteworthy-workspace-mirror-directory
+            (syncworthy-workspace-bridge-command (list (nws-live--env "NWS_LIVE_BRIDGE")))
+            (syncworthy-workspace-mirror-directory
              (file-name-as-directory (make-temp-file (expand-file-name "mirror-" tmp) t)))
             (emacs-collab-layout-state-file (expand-file-name "state.eld" tmp))
             (emacs-collab-layout--sizes nil)
@@ -42,12 +42,17 @@
             (emacs-collab-layout--projects nil)
             (emacs-collab--connections nil)
             (noteworthy-workspace--sessions nil)
+            (syncworthy-workspace--sessions nil)
+            (emacs-collab-mirror-state-file (make-temp-name (expand-file-name "mirrors-" tmp)))
+            (emacs-collab-mirror--table 'unloaded)
             (noteworthy-workspace-preview nil)
             (noteworthy-project-root nil)
             (noteworthy-master-file nil)
             (unrelated (generate-new-buffer "*unrelated*"))
             (served (file-name-as-directory (nws-live--env "NWS_LIVE_DIR")))
-            (,conn (noteworthy-syncworthy-connect (nws-live--env "NWS_LIVE_URL"))))
+            (,conn (cl-letf (((symbol-function 'read-directory-name)
+                             (lambda (_p &optional dir &rest _) dir)))
+                    (noteworthy-connect (nws-live--env "NWS_LIVE_URL")))))
        (cl-letf (((symbol-function 'typst-preview-start) #'ignore))
          (save-window-excursion
            (unwind-protect
@@ -59,7 +64,7 @@
              (when (memq ,conn emacs-collab--connections) (emacs-collab-disconnect ,conn))
              (kill-buffer unrelated)
              (noteworthy-workspace--uninstall)
-             (ignore-errors (delete-directory noteworthy-workspace-mirror-directory t))))))))
+             (ignore-errors (delete-directory syncworthy-workspace-mirror-directory t))))))))
 
 (ert-deftest nws-live-connect-edit-quit ()
   (nws-live--with-connection conn
@@ -68,7 +73,7 @@
       ;; The mirror: the project's files, local.
       (should (file-directory-p (expand-file-name "content" mirror)))
       (should (file-exists-p (expand-file-name "config/hierarchy.json" mirror)))
-      (should (file-in-directory-p mirror noteworthy-workspace-mirror-directory))
+      (should (file-in-directory-p mirror syncworthy-workspace-mirror-directory))
       ;; Layout on the mirror.
       (let ((roles (delq nil (mapcar (lambda (w) (window-parameter w 'emacs-collab-role))
                                      (window-list nil 'no-minibuf)))))
@@ -76,6 +81,12 @@
       (should (equal noteworthy-project-root (file-name-as-directory (file-truename mirror))))
       (should (equal (buffer-file-name (window-buffer (emacs-collab-layout-window 'editor)))
                      first))
+      (should (equal (plist-get (syncworthy-workspace-session-extras
+                                 (car syncworthy-workspace--sessions)) :master)
+                     noteworthy-master-file))
+      (with-current-buffer (window-buffer (emacs-collab-layout-window 'editor))
+        (should noteworthy-workspace-mode))
+      (should (= 2 (length (noteworthy-workspace-typst-input-flags mirror))))
       ;; The page is attached and syncs.
       (let ((buf (get-file-buffer first)))
         (should buf)
@@ -98,7 +109,8 @@
         (noteworthy-workspace-quit)
         (should (nws-live--wait (lambda () (not (process-live-p proc))) 5))
         (should-not (memq conn emacs-collab--connections))
-        (should-not noteworthy-workspace--sessions)
+        (should-not syncworthy-workspace--sessions)
+        (should-not noteworthy-project-root)
         (should (buffer-live-p unrelated))
         (should (= 1 (length (window-list nil 'no-minibuf))))))))
 
@@ -124,9 +136,9 @@
                30)))))
 
 (ert-deftest nws-live-bad-bridge-is-a-user-error ()
-  (let ((noteworthy-workspace-bridge-command '("/no/such/bridge")))
-    (should-error (noteworthy-syncworthy-connect "127.0.0.1:1") :type 'user-error)
-    (should-not noteworthy-workspace--sessions)))
+  (let ((syncworthy-workspace-bridge-command '("/no/such/bridge")))
+    (should-error (noteworthy-connect "127.0.0.1:1") :type 'user-error)
+    (should-not syncworthy-workspace--sessions)))
 
 (provide 'noteworthy-workspace-live)
 ;;; noteworthy-workspace-live.el ends here
